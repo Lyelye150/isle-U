@@ -151,6 +151,13 @@ jobs:
               -DISLE_DEBUG=${{ matrix.debug || 'OFF' }} \
               -Werror=dev"
 
+      - name: Download OpenXR Loader (VR/XR)
+        run: |
+          mkdir -p 3rdparty/openxr_loader_WIN
+          curl -L -o openxr_loader_windows-1.1.50.zip \
+          https://github.com/KhronosGroup/OpenXR-SDK-Source/releases/download/release-1.1.50/openxr_loader_windows-1.1.50.zip
+          unzip -o openxr_loader_windows-1.1.50.zip -d 3rdparty/openxr_loader_WIN
+
       - name: Configure (CMake)
         if: ${{ !matrix.android }}
         run: |
@@ -163,6 +170,7 @@ jobs:
             -DENABLE_CLANG_TIDY=${{ !!matrix.clang-tidy  }} \
             -DISLE_WERROR=${{ !!matrix.werror }} \
             -DISLE_DEBUG=${{ matrix.debug || 'OFF' }} \
+            -DISLE_VR=ON \
             -Werror=dev
 
       - name: Build (CMake)
@@ -235,6 +243,9 @@ jobs:
           name: '${{ matrix.name }}'
           path: |
             build/dist/isle-*
+            build/dist/isleVR-*
+            build/dist/openxr_loader.dll
+            build/dist/openxr_loader.lib
             build/dist/*.AppImage
             build/dist/*.3dsx
             build/dist/*.cia
