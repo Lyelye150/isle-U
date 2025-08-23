@@ -42,6 +42,11 @@ find_program(SDL_SHADERCROSS_BIN NAMES "shadercross")
 find_package(Python3 3.12 COMPONENTS Interpreter)
 
 option(ISLE_BUILD_APP "Build isle application" ON)
+if(NOT IOS AND NOT EMSCRIPTEN AND NOT NINTENDO_3DS AND NOT ANDROID AND NOT WINDOWS_STORE AND NOT LINUX AND NOT APPLE)
+option(ISLE_VR "Build and enables VR/XR support" ON)
+else()
+option(ISLE_VR "Build and enables VR/XR support" OFF)
+endif()
 option(ISLE_BUILD_ASSETS "Build assets from the /assets directory" OFF)
 option(ISLE_ASAN "Enable Address Sanitizer" OFF)
 option(ISLE_UBSAN "Enable Undefined Behavior Sanitizer" OFF)
@@ -60,6 +65,7 @@ set(ISLE_EMSCRIPTEN_HOST "" CACHE STRING "Host URL for Emscripten streaming (e.g
 cmake_dependent_option(BUILD_SHARED_LIBS "Build lego1 as a shared library" ON "NOT EMSCRIPTEN" OFF)
 
 message(STATUS "Isle app:               ${ISLE_BUILD_APP}")
+message(STATUS "VR/XR Support:          ${ISLE_VR}")
 message(STATUS "Config app:             ${ISLE_BUILD_CONFIG}")
 message(STATUS "Internal DirectX5 SDK:  ${ISLE_USE_DX5}")
 message(STATUS "Internal miniwin:       ${ISLE_MINIWIN}")
@@ -522,6 +528,11 @@ if (ISLE_BUILD_APP)
     ${CMAKE_SOURCE_DIR}/ISLE/res/busy_bmp.h
     ${CMAKE_SOURCE_DIR}/ISLE/res/no_bmp.h
   )
+
+  if(MSVC)
+    target_compile_options(isle PRIVATE /wd4005)
+  endif()
+
   list(APPEND isle_targets isle)
   if (WIN32)
     add_custom_command(TARGET isle POST_BUILD
@@ -577,6 +588,101 @@ if (ISLE_BUILD_APP)
     target_compile_definitions(isle PRIVATE "ISLE_EMSCRIPTEN_HOST=\"${ISLE_EMSCRIPTEN_HOST}\"")
     set_property(TARGET isle PROPERTY SUFFIX ".html")
   endif()
+endif()
+
+if(ISLE_VR)
+set(BUILD_WITH_WERROR OFF CACHE BOOL "" FORCE)
+set(BUILD_API_LAYERS OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "" FORCE)
+endif()
+
+if(ISLE_VR)
+  include(FetchContent)
+  FetchContent_Declare(
+    OpenXR-SDK-Source
+    GIT_REPOSITORY https://github.com/KhronosGroup/OpenXR-SDK-Source.git
+    GIT_TAG d0f5b6ab67e069fa52869625a1fc341bf5cab3d0
+  )
+  FetchContent_MakeAvailable(OpenXR-SDK-Source)
+
+  if(MINGW)
+    foreach(tgt XrApiLayer_core_validation)
+      if(TARGET ${tgt})
+        target_compile_options(${tgt} PRIVATE -Wno-error -Wno-error=address)
+      endif()
+    endforeach()
+  endif()
+endif()
+
+  if(ISLE_VR)
+    # samething as ISLE_BUILD_APP but with XR support
+
+    add_executable(isleVR WIN32
+    ${CMAKE_SOURCE_DIR}/ISLEVR/res/isle.rc
+    ${CMAKE_SOURCE_DIR}/ISLEVR/isleapp.cpp
+    ${CMAKE_SOURCE_DIR}/ISLEVR/header.cpp
+    ${CMAKE_SOURCE_DIR}/ISLEVR/islefiles.cpp
+    ${CMAKE_SOURCE_DIR}/ISLEVR/res/arrow_bmp.h
+    ${CMAKE_SOURCE_DIR}/ISLEVR/res/busy_bmp.h
+    ${CMAKE_SOURCE_DIR}/ISLEVR/res/no_bmp.h
+    )
+
+    if(MSVC)
+    target_compile_options(isleVR PRIVATE /wd4005)
+
+    target_compile_definitions(isleVR PRIVATE NOMINMAX)
+
+    target_compile_options(isleVR PRIVATE /Zc:__cplusplus)
+    endif()
+
+    list(APPEND isleVR_targets isleVR)
+    if (WIN32)
+      add_custom_command(TARGET isleVR POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy $<TARGET_RUNTIME_DLLS:isle> "$<TARGET_FILE_DIR:isle>"
+        COMMAND_EXPAND_LISTS
+        )
+        endif()
+
+    target_compile_definitions(isleVR PRIVATE ISLE_APP)
+
+    # Include OpenXR headers
+    target_include_directories(isleVR PRIVATE
+        ${CMAKE_SOURCE_DIR}/build/_deps/openxr-sdk-source-src/include)
+
+    # Link OpenXR library
+    target_link_libraries(isleVR PRIVATE
+        ${CMAKE_SOURCE_DIR}/build/_deps/openxr-sdk-source-build/lib/x64/openxr_loader.lib)
+
+    # Link openxr_loader
+    add_custom_command(TARGET isleVR POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/build/_deps/openxr-sdk-source-build/bin/x64/openxr_loader.dll"
+        $<TARGET_FILE_DIR:isleVR>)
+
+    # Use internal DirectX 5 if required
+    target_link_libraries(isleVR PRIVATE $<$<BOOL:${ISLE_USE_DX5}>:DirectX5::DirectX5>)
+
+    # Link SDL and iniparser
+    target_link_libraries(isleVR PRIVATE SDL3::SDL3 Isle::iniparser)
+
+    # Allow unconditional include of miniwin/miniwindevice.h
+    target_link_libraries(isleVR PRIVATE miniwin-headers)
+
+    # links isleVR to miniwin
+    target_compile_definitions(isleVR PRIVATE MINIWIN)
+
+    # Vector math
+    target_link_libraries(isleVR PRIVATE Vec::Vec)
+
+    # Link DSOUND and WINMM
+    if (WIN32)
+      target_link_libraries(isleVR PRIVATE winmm)
+    endif()
+    # Link LEGO1
+    target_link_libraries(isleVR PRIVATE lego1)
+  endif()
+
   if(NINTENDO_3DS)
     target_sources(isle PRIVATE
       ISLE/3ds/apthooks.cpp
@@ -631,7 +737,6 @@ if (ISLE_BUILD_APP)
       )
     endif()
   endif()
-endif()
 
 if (ISLE_BUILD_CONFIG)
   find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
@@ -789,6 +894,15 @@ if (NOT (NINTENDO_3DS OR WINDOWS_STORE))
     BUNDLE DESTINATION "."
   )
 endif()
+
+if(ISLE_VR)
+install(TARGETS ${isleVR_targets}
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        BUNDLE DESTINATION "."
+    )
+endif()
+
 if (ISLE_BUILD_CONFIG)
   if(WIN32)
     find_program(WINDEPLOYQT_EXECUTABLE windeployqt)
